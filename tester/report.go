@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -176,8 +177,8 @@ func (r *Report) DirAggregates(p string) string {
 func (r *Report) String() string {
 	content := strings.Join([]string{
 		"Repeat round",
-		"Configuration",
 		"Target",
+		"Configuration",
 		"Deadlock mismatches",
 		"Exceptions",
 		"Comment",
@@ -228,7 +229,7 @@ func (r *Report) String() string {
 	totalGuesses := correctGuesses + incorrectGuesses
 	content += "\n\n" + fmt.Sprintf("Correct guesses: %d/%d (%.2f%%)\n", correctGuesses, totalGuesses, float64(correctGuesses)/float64(totalGuesses)*100) +
 		fmt.Sprintf("Correct deadlocks: %d/%d (%.2f%%)\n", correctDeadlocks, expectedDeadlocks, float64(correctDeadlocks)/float64(expectedDeadlocks)*100) +
-		fmt.Sprintf("Correct not deadlocks: %d/%d (%.2f%%)\n", correctGuesses-correctDeadlocks, totalGuesses-expectedDeadlocks, float64(correctGuesses-correctDeadlocks)/float64(totalGuesses)*100) +
+		fmt.Sprintf("Correct not deadlocks: %d/%d\n", correctGuesses-correctDeadlocks, totalGuesses-expectedDeadlocks) +
 		fmt.Sprintf("Incorrect guesses: %d (%.2f%%)\n", incorrectGuesses, float64(incorrectGuesses)/float64(totalGuesses)*100)
 
 	return content
@@ -304,4 +305,94 @@ func (r *Report) OverheadMeasurements() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// OverheadMeasurementsPlot produces a report comparing the performance
+// of the GC with deadlock enabled and disabled at equivalent runtime configurations.
+// The output is a .tex file that can be compiled to a PDF, and resembles the evaluation
+// in the paper.
+func (r *Report) OverheadMeasurementsPlot() string {
+	reportSlice := make([]*TargetReport, 0, len(r.Results))
+	for _, report := range r.Results {
+		if report.Config.HasDeadlockDetection() {
+			reportSlice = append(reportSlice, report)
+		}
+	}
+
+	perfs := make([]GCPerf, 0, len(reportSlice))
+	for _, report := range reportSlice {
+		dlOffReport, ok := r.Results[report.GetDeadlockToggleReport()]
+		if !ok {
+			log.Println("Did not find equivalent report with deadlock detection off for:", report.TraceFile)
+			continue
+		}
+
+		onPerf := report.Trace.GetGCPerf()
+		if onPerf == (GCPerf{}) {
+			// Missing GC trace?
+			log.Println("Missing GC trace for:", report.TraceFile)
+			continue
+		}
+		offPerf := dlOffReport.Trace.GetGCPerf()
+		perfs = append(perfs, GetPerfDelta(offPerf, onPerf))
+	}
+
+	slices.SortFunc(perfs, func(p1, p2 GCPerf) int {
+		return int(p1.avgMarkClockOff*100 - p2.avgMarkClockOff*100)
+	})
+
+	contentOn := make([]string, 0, len(perfs))
+	contentOff := make([]string, 0, len(perfs))
+	for i, perf := range perfs {
+		contentOn = append(contentOn, fmt.Sprintf("(%f, %f)", float64(i)/5, math.Log10(perf.avgMarkClockOff)))
+		contentOff = append(contentOff, fmt.Sprintf("(%f, %f)", float64(i)/5, math.Log10(perf.avgMarkClockOn)))
+	}
+
+	return `
+\documentclass{standalone}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+
+\begin{document}
+
+
+\begin{tikzpicture}
+	\begin{axis}[
+		width=\columnwidth, height=10cm,
+		axis x line=middle,
+		axis y line=middle,
+		xmin=0, xmax=` + strconv.FormatFloat(float64(len(perfs))/5, 'f', 2, 64) + `,
+		ymin=2, ymax=6,
+		ytick={2.01, 3, 4, 5, 6},
+		yticklabels={$10^2$, $10^3$, $10^4$, $10^5$, $10^6$},
+		xtick={},
+		xticklabels={},
+		ylabel={$\mu s$},
+		xlabel style={below left},
+		xlabel={Benchmarks},
+		ylabel style={above left},
+		grid=both,
+		legend style={
+			at={(0.25,-0.1)},
+			anchor=north,
+			draw=none,
+			fill=none,
+			legend columns=2,
+		},
+		legend cell align={left}
+		]
+		\addplot[smooth,dashed] plot coordinates {
+	` + strings.Join(contentOff, " ") + `
+	};
+	\addlegendentry{Baseline\ \ \ }
+	\addplot[smooth] plot coordinates {
+	` + strings.Join(contentOn, " ") + `
+	};
+	\addlegendentry{Golf}
+\end{axis}
+\end{tikzpicture}
+
+\end{document}
+`
 }

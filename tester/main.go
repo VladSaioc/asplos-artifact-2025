@@ -236,6 +236,10 @@ func RunBenchmark() {
 		if err := os.WriteFile(reportDest+"-perf.csv", []byte(content), os.ModePerm); err != nil {
 			log.Fatal("Failed to write report:", err)
 		}
+		content = fullReport.OverheadMeasurementsPlot()
+		if err := os.WriteFile(reportDest+".tex", []byte(content), os.ModePerm); err != nil {
+			log.Fatal("Failed to plot report:", err)
+		}
 	}
 }
 

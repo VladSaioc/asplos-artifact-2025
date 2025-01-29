@@ -26,7 +26,7 @@ RUN (echo "Y" && cat) | apt install python3-setuptools
 RUN (echo "Y" && cat) | apt install python3-tqdm
 RUN (echo "Y" && cat) | apt install sudo
 
-FROM baseline AS go-setup
+FROM baseline AS golf
 
 WORKDIR /usr/app
 COPY ./baseline /usr/app/baseline
