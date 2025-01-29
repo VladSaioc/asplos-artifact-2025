@@ -1,0 +1,5 @@
+results-*
+go-deadlock-gc-tester
+main
+settings.json
+.DS_Store

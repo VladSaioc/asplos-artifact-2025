@@ -1,0 +1,307 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+// Report is a struct that holds a comprehensive report of the analysis.
+type Report struct {
+	sync.WaitGroup
+	sync.Mutex
+	ticket  chan struct{}
+	Results map[string]*TargetReport
+}
+
+func (r *Report) Append(report TargetReport) {
+	defer r.Unlock()
+	r.Lock()
+	if r.Results == nil {
+		r.Results = make(map[string]*TargetReport)
+	}
+	r.Results[report.TraceFile] = &report
+}
+
+// TargetReport is a struct that holds a report of a single target execution.
+type TargetReport struct {
+	Config
+	Name      string
+	TraceFile string
+	Exception error
+	Repeat    int
+	ExpectedDeadlocks
+	Trace    Trace
+	RawTrace []byte
+	Diff     *DeadlockDifferential
+}
+
+// GetDeadlockToggleReport retrieves the name of the report for the
+// target with the deadlock detection toggled:
+//
+//	If the report is "off", it produces the target report name "collect"
+//	If the report is "collect/monitor", it produces the target report name "off"
+func (r *TargetReport) GetDeadlockToggleReport() string {
+	return strings.ReplaceAll(r.TraceFile, r.Config.Name(), r.Config.WithToggledDeadlockDetection().Name())
+}
+
+// IsBuggy returns true if the target directory path contains `buggy`.
+func (r *TargetReport) IsBuggy() bool {
+	return strings.Contains(r.ExpectedDeadlocks.Target, string(os.PathSeparator)+"buggy"+string(os.PathSeparator))
+}
+
+// IsBuggy returns true if the target directory path contains `deadlock`.
+func (r *TargetReport) IsDeadlock() bool {
+	return strings.Contains(r.ExpectedDeadlocks.Target, string(os.PathSeparator)+"deadlock"+string(os.PathSeparator))
+}
+
+// IsCorrect returns true if the target directory path contains `correct`.
+func (r *TargetReport) IsCorrect() bool {
+	return strings.Contains(r.ExpectedDeadlocks.Target, string(os.PathSeparator)+"correct"+string(os.PathSeparator))
+}
+
+// Emit content of target execution trace to trace file.
+func (r *TargetReport) EmitToFile() error {
+	content := fmt.Sprintf("Ran %s with configuration:\n%s\n\n", r.ExpectedDeadlocks.Target, r.Config) +
+		string(r.RawTrace)
+
+	return os.WriteFile(r.TraceFile, []byte(content), os.ModePerm)
+}
+
+func (r *TargetReport) CompareWithTrace() {
+	diff := r.ExpectedDeadlocks.CompareWithTrace(r.Trace)
+	r.Diff = &diff
+}
+
+func (r *TargetReport) String() string {
+	const (
+		REPEAT = iota
+		TARGET
+		CONFIG
+		DEADLOCKS
+		EXCEPTIONS
+		COMMENT
+	)
+
+	content := make([][]string, 0, 2)
+	content = append(content, []string{
+		REPEAT:     strconv.Itoa(r.Repeat),
+		TARGET:     r.Target,
+		CONFIG:     r.Config.Name(),
+		DEADLOCKS:  "No mismatches",
+		EXCEPTIONS: "-",
+		COMMENT:    "",
+	})
+
+	annotationsExpectDeadlock := r.DeadlockShouldBeFound()
+
+	if r.IsCorrect() && annotationsExpectDeadlock {
+		content[0][COMMENT] = "Annotations expected deadlock in correct example; "
+	}
+	if r.IsCorrect() && len(r.Trace.Deadlocks) > 0 {
+		content[0][COMMENT] += "Deadlock found in correct example trace; "
+	}
+	if r.IsDeadlock() && !annotationsExpectDeadlock {
+		content[0][COMMENT] += "Missing deadlock annotation in deadlock example; "
+	}
+	if content[0][COMMENT] == "" {
+		content[0][COMMENT] = "-"
+	}
+	if r.Exception != nil {
+		content[0][EXCEPTIONS] = "[" + r.Exception.Error() + "] "
+	}
+
+	if msg, ok := r.TraceHasExceptions(); ok {
+		content[0][EXCEPTIONS] += msg
+	}
+
+	r.CompareWithTrace()
+	if len(r.Diff.Mismatches) > 0 {
+		slices.SortFunc(r.Diff.Mismatches, func(i, j DeadlockMismatch) int {
+			return strings.Compare(i.String(), j.String())
+		})
+
+		content[0][DEADLOCKS] = r.Diff.Mismatches[0].String()
+		for i, mismatch := range r.Diff.Mismatches[1:] {
+			content = append(content, make([]string, COMMENT+1))
+			content[i+1][DEADLOCKS] = mismatch.String()
+			content[i+1][REPEAT] = strconv.Itoa(r.Repeat)
+			content[i+1][TARGET] = r.Target
+			content[i+1][CONFIG] = r.Config.Name()
+			if r.Exception != nil {
+				content[i+1][EXCEPTIONS] = "[" + r.Exception.Error() + "] "
+			}
+			if msg, ok := r.TraceHasExceptions(); ok {
+				content[i+1][COMMENT] += msg
+			}
+		}
+	}
+
+	lines := []string{}
+	for _, row := range content {
+		if row[DEADLOCKS] == "No mismatches" && row[EXCEPTIONS] == "-" {
+			continue
+		}
+		lines = append(lines, strings.Join(row, ",\t"))
+	}
+	return strings.Join(lines, "@:@")
+}
+
+func (r *Report) DirAggregates(p string) string {
+	var correctDeadlocks, expectedDeadlocks, correctGuesses, incorrectGuesses int
+	for _, report := range r.Results {
+		if strings.Contains(report.Target, p) && report.HasDeadlockDetection() {
+			correctGuesses += report.Diff.CorrectDeadlockFound + report.Diff.CorrectNoDeadlockFound
+			correctDeadlocks += report.Diff.CorrectDeadlockFound
+			incorrectGuesses += len(report.Diff.Mismatches)
+			for _, dl := range report.Deadlocks {
+				if dl.DeadlockShouldBeFound() {
+					expectedDeadlocks++
+				}
+			}
+		}
+	}
+
+	content := fmt.Sprintf("Directory: %s\n", p)
+	content += fmt.Sprintf("Correct guesses: %d/%d (%.2f%%)\n", correctGuesses, correctGuesses+incorrectGuesses, float64(correctGuesses)/float64(correctGuesses+incorrectGuesses)*100)
+	content += fmt.Sprintf("Correct deadlocks: %d (%.2f%%)\n", correctDeadlocks, float64(correctDeadlocks)/float64(expectedDeadlocks)*100)
+
+	return content
+}
+
+func (r *Report) String() string {
+	content := strings.Join([]string{
+		"Repeat round",
+		"Configuration",
+		"Target",
+		"Deadlock mismatches",
+		"Exceptions",
+		"Comment",
+	}, ",\t")
+
+	reportSlice := make([]*TargetReport, 0, len(r.Results))
+	for _, report := range r.Results {
+		if report.HasDeadlockDetection() {
+			reportSlice = append(reportSlice, report)
+		}
+	}
+
+	slices.SortFunc(reportSlice, func(r1, r2 *TargetReport) int {
+		return strings.Compare(r1.TraceFile, r2.TraceFile)
+	})
+
+	reportStrings := make([]string, 0, len(r.Results))
+	for i, report := range reportSlice {
+		if str := report.String(); str != "" {
+			reportStrings = append(reportStrings, str)
+		}
+		reportSlice[i] = report
+	}
+
+	slices.Sort(reportStrings)
+	for i, report := range reportStrings {
+		reportStrings[i] = strings.Replace(report, "@:@", ",\n", -1)
+	}
+
+	content += "\n" + strings.Join(reportStrings, "\n")
+
+	var (
+		correctDeadlocks, expectedDeadlocks int
+		correctGuesses                      int
+		incorrectGuesses                    int
+	)
+	for _, report := range reportSlice {
+		correctGuesses += report.Diff.CorrectDeadlockFound + report.Diff.CorrectNoDeadlockFound
+		correctDeadlocks += report.Diff.CorrectDeadlockFound
+		incorrectGuesses += len(report.Diff.Mismatches)
+		for _, dl := range report.Deadlocks {
+			if dl.DeadlockShouldBeFound() {
+				expectedDeadlocks++
+			}
+		}
+	}
+
+	totalGuesses := correctGuesses + incorrectGuesses
+	content += "\n\n" + fmt.Sprintf("Correct guesses: %d/%d (%.2f%%)\n", correctGuesses, totalGuesses, float64(correctGuesses)/float64(totalGuesses)*100) +
+		fmt.Sprintf("Correct deadlocks: %d/%d (%.2f%%)\n", correctDeadlocks, expectedDeadlocks, float64(correctDeadlocks)/float64(expectedDeadlocks)*100) +
+		fmt.Sprintf("Correct not deadlocks: %d/%d (%.2f%%)\n", correctGuesses-correctDeadlocks, totalGuesses-expectedDeadlocks, float64(correctGuesses-correctDeadlocks)/float64(totalGuesses)*100) +
+		fmt.Sprintf("Incorrect guesses: %d (%.2f%%)\n", incorrectGuesses, float64(incorrectGuesses)/float64(totalGuesses)*100)
+
+	return content
+}
+
+// OverheadMeasurements produces a report comparing the performance
+// of the GC with deadlock enabled and disabled at equivalent runtime configurations.
+func (r *Report) OverheadMeasurements() string {
+	reportSlice := make([]*TargetReport, 0, len(r.Results))
+	for _, report := range r.Results {
+		if report.Config.HasDeadlockDetection() {
+			reportSlice = append(reportSlice, report)
+		}
+	}
+
+	slices.SortFunc(reportSlice, func(r1, r2 *TargetReport) int {
+		return strings.Compare(r1.TraceFile, r2.TraceFile)
+	})
+
+	const (
+		TARGET = iota
+		MARKCLOCKOFF
+		MARKCLOCKON
+		CPUTILOFF
+		CPUTILON
+		TERMCLOCK
+		MARKCPU
+		TERMCPU
+		HEAP
+		STACK
+		GCYCLES
+		UTILIZATION
+		NUMGOS
+	)
+
+	content := make([][]string, 1, 2)
+	content[0] = []string{
+		TARGET:       "Target",
+		MARKCLOCKOFF: "Mark clock OFF (μs)",
+		MARKCLOCKON:  "Mark clock ON (μs)",
+		CPUTILOFF:    "CPU utilization OFF (%)",
+		CPUTILON:     "CPU utilization ON (%)",
+	}
+
+	for _, report := range reportSlice {
+		dlOffReport, ok := r.Results[report.GetDeadlockToggleReport()]
+		if !ok {
+			log.Println("Did not find equivalent report with deadlock detection off for:", report.TraceFile)
+			continue
+		}
+
+		onPerf := report.Trace.GetGCPerf()
+		if onPerf == (GCPerf{}) {
+			// Missing GC trace?
+			log.Println("Missing GC trace for:", report.TraceFile)
+			continue
+		}
+		offPerf := dlOffReport.Trace.GetGCPerf()
+		perfDelta := GetPerfDelta(offPerf, onPerf)
+
+		content = append(content, []string{
+			TARGET:       report.TraceFile,
+			MARKCLOCKOFF: strconv.FormatFloat(perfDelta.avgMarkClockOff, 'f', 2, 64),
+			MARKCLOCKON:  strconv.FormatFloat(perfDelta.avgMarkClockOn, 'f', 2, 64),
+			CPUTILOFF:    strconv.FormatFloat(perfDelta.avgUtilizationOff, 'f', 2, 64),
+			CPUTILON:     strconv.FormatFloat(perfDelta.avgUtilizationOn, 'f', 2, 64),
+		})
+	}
+
+	lines := make([]string, 0, len(content))
+	for _, row := range content {
+		lines = append(lines, strings.Join(row, ",\t"))
+	}
+
+	return strings.Join(lines, "\n")
+}
