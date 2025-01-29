@@ -8,7 +8,7 @@ This artifact supports the claims in the paper about the microbenchmark evaluati
 
 In order the supported claims are:
 * Demonstrating the efficacy of Golf in the detecting the partial deadlocks in the microbenchmark suite.
-* Demonstrating that the runtime overhead is not
+* Demonstrating that the runtime overhead is not signficantly larger than the baseline, and may even outperform the baseline GC for buggy examples.
 
 ## Requirements
 
@@ -160,4 +160,4 @@ CONTAINER ID    IMAGE      COMMAND   CREATED          STATUS          PORTS     
 ```
 docker cp <ID>:/usr/app/tester/results.tex ./results.tex
 ```
-5. Render `./results.tex` into PDF with the TeX compiler of your choice.
+5. Render `./results.tex` as a PDF with the TeX compiler of your choice.
