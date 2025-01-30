@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -125,19 +126,30 @@ func (r *TargetReport) String() string {
 		slices.SortFunc(r.Diff.Mismatches, func(i, j DeadlockMismatch) int {
 			return strings.Compare(i.String(), j.String())
 		})
-
-		content[0][DEADLOCKS] = r.Diff.Mismatches[0].String()
-		for i, mismatch := range r.Diff.Mismatches[1:] {
-			content = append(content, make([]string, COMMENT+1))
-			content[i+1][DEADLOCKS] = mismatch.String()
-			content[i+1][REPEAT] = strconv.Itoa(r.Repeat)
-			content[i+1][TARGET] = r.Target
-			content[i+1][CONFIG] = r.Config.Name()
-			if r.Exception != nil {
-				content[i+1][EXCEPTIONS] = "[" + r.Exception.Error() + "] "
+		mismatches := make([]DeadlockMismatch, 0, len(r.Diff.Mismatches))
+		for _, mismatch := range r.Diff.Mismatches {
+			if mismatch.Unexpected {
+				mismatches = append(mismatches, mismatch)
 			}
-			if msg, ok := r.TraceHasExceptions(); ok {
-				content[i+1][COMMENT] += msg
+		}
+
+		if len(mismatches) > 0 {
+			content[0][DEADLOCKS] = mismatches[0].String()
+			for i, mismatch := range mismatches[1:] {
+				if !mismatch.Unexpected {
+					continue
+				}
+				content = append(content, make([]string, COMMENT+1))
+				content[i+1][DEADLOCKS] = mismatch.String()
+				content[i+1][REPEAT] = strconv.Itoa(r.Repeat)
+				content[i+1][TARGET] = r.Target
+				content[i+1][CONFIG] = r.Config.Name()
+				if r.Exception != nil {
+					content[i+1][EXCEPTIONS] = "[" + r.Exception.Error() + "] "
+				}
+				if msg, ok := r.TraceHasExceptions(); ok {
+					content[i+1][COMMENT] += msg
+				}
 			}
 		}
 	}
@@ -233,6 +245,114 @@ func (r *Report) String() string {
 		fmt.Sprintf("Incorrect guesses: %d (%.2f%%)\n", incorrectGuesses, float64(incorrectGuesses)/float64(totalGuesses)*100)
 
 	return content
+}
+
+// Tabulated produces a tabulated report of the analysis.
+func (r *Report) Tabulated() string {
+	type tabEntry struct {
+		target  string
+		goro    string
+		pconfig []int
+		total   float64
+	}
+
+	procconfigs := make(map[int]int)
+	for i, v := range defaultvalues[PROCS] {
+		procconfigs[int(v.(maxProcs))] = i
+	}
+
+	entries := make(map[string]tabEntry)
+	for _, report := range r.Results {
+		if !report.HasDeadlockDetection() {
+			continue
+		}
+
+	DEADLOCKS:
+		for _, dl := range report.Deadlocks {
+			pos := path.Join(report.Target, "main.go", dl.PosString())
+			entry, ok := entries[pos]
+			if !ok {
+				entry = tabEntry{
+					target:  report.Target,
+					goro:    pos,
+					pconfig: make([]int, len(procconfigs)),
+				}
+			}
+
+			for _, mismatch := range report.Diff.Mismatches {
+				if dl.PosString() == mismatch.PosString() {
+					continue DEADLOCKS
+				}
+			}
+
+			entry.pconfig[procconfigs[report.Config.Ps()]]++
+			entries[pos] = entry
+		}
+	}
+
+	entriesSlice := make([]tabEntry, 0, len(entries))
+	correctTargets := make(map[string]struct{})
+	aggregated := tabEntry{
+		pconfig: make([]int, len(procconfigs)),
+	}
+
+	for _, entry := range entries {
+		var total float64
+		for i, p := range entry.pconfig {
+			total += float64(p)
+			aggregated.pconfig[i] += p
+		}
+		total = total / (float64(len(procconfigs) * numberOfRepeats)) * 100
+		if total == 100 {
+			correctTargets[entry.target] = struct{}{}
+			continue
+		}
+		entry.total = total
+		entriesSlice = append(entriesSlice, entry)
+	}
+
+	slices.SortFunc(entriesSlice, func(e1, e2 tabEntry) int {
+		return strings.Compare(e1.goro, e2.goro)
+	})
+
+	content := make([]string, 1, len(entries))
+
+	header := make([]string, len(procconfigs)+2)
+	header[0] = "Benchmark"
+	for p, i := range procconfigs {
+		header[i+1] = strconv.Itoa(p) + "P"
+	}
+	header[len(header)-1] = "Total"
+	content[0] = strings.Join(header, "\t")
+
+	for _, entry := range entriesSlice {
+		tabulated := make([]string, len(procconfigs)+2)
+		prettyTarget := strings.TrimPrefix(entry.goro, "tests/deadlock/")
+		prettyTarget = strings.TrimPrefix(prettyTarget, "gobench/")
+		prettyTarget = strings.Replace(prettyTarget, "blocking/", "", 1)
+		tabulated[0] = prettyTarget
+		for i, p := range entry.pconfig {
+			tabulated[i+1] = strconv.Itoa(p)
+		}
+		tabulated[len(tabulated)-1] = strconv.FormatFloat(entry.total, 'f', 2, 64) + "%"
+		content = append(content, strings.Join(tabulated, "\t"))
+	}
+
+	remainingTabulated := make([]string, len(procconfigs)+2)
+	remainingTabulated[0] = fmt.Sprintf("Remaining %d go instruction (%d benchmarks)", len(entries)-len(entriesSlice), len(correctTargets))
+	remainingTabulated[len(remainingTabulated)-1] = strconv.FormatFloat(100, 'f', 2, 64) + "%"
+	content = append(content, strings.Join(remainingTabulated, "\t"))
+
+	aggregatedTabulated, aggregatedtotal := make([]string, len(procconfigs)+2), float64(0)
+	aggregatedTabulated[0] = "Aggregated"
+	for i, p := range aggregated.pconfig {
+		aggregatedTabulated[i+1] = strconv.FormatFloat(float64(p)/float64(len(entries)*numberOfRepeats)*100, 'f', 2, 64) + "%"
+		aggregatedtotal += float64(p)
+	}
+	aggregatedTabulated[len(aggregatedTabulated)-1] = strconv.FormatFloat(aggregatedtotal/float64(len(entries)*numberOfRepeats*len(procconfigs))*100, 'f', 2, 64) + "%"
+	content = append(content, strings.Join(aggregatedTabulated, "\t"))
+
+	return strings.Join(content, "\n")
 }
 
 // OverheadMeasurements produces a report comparing the performance

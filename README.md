@@ -64,6 +64,8 @@ Due to non-determinism and flakiness, it is expected that the results will vary 
 
 #### Microbenchmark coverage
 
+The microbenchmarks include two suites: `cgo-examples` and `goker`, extracted from Saioc et al.[19], and Ting Yuan et al.[28], respectively.
+
 To print the microbenchmark coverage report, run the following:
 ```
 cat results
@@ -81,45 +83,39 @@ In order, each column represents the following:
 2. `Target` identifies the microbenchmark by file path.
 3. `Configuration` lists the runtime configuration with which the microbenchmark was executed, e.g., number of concurrent processes, or GC flags, up to, and including the enabling of deadlock detection.
 4. `Deadlock mismatches` lists all the mismatched entries between expected and unexpected deadlocks.
-The following is an example of an expected deadlock that was not reported: ``[Expected: x > 0; Actual: 0] at n-cast/main.go:24:4 (main.NCastLeak.func1)``. The goroutine is syntactically created at `n-cast/main.go:24:4`, and at runtime, its name is `main.NCastLeak.func1`.
-The expression `x > 0` states that at least one partial deadlock was expected at this goroutine for the microbenchmark named `n-cast`, but none were detected (hence: `Actual: 0`).
-The `Expected` expression is extracted from a code comment in the microbenchmark source file.
 If an unexpected partial deadlock is reclaimed, the report will include an entry such as `Unexpected DL: main.NCastLeakFixed.func1`.
 5. `Exceptions` lists any exceptions raised by the microbenchmark at runtime.
 6. `Comments` lists any additional comments (it is mostly used to give more context to runtime exceptions).
 
-In `results`, most entries will correspond with expected deadlocks which are not reported by Golf. These mismatches are expected, and correspond with the flakiness described in Section 6.2, ***RQ1 (a)***. This is especially true for all entries explicitly listed in Table 1.
-
 The expected outcome is that `results` does **NOT** include any entries corresponding to unexpected deadlock reports (`Unexpected DL`).
 
-Occasionally, `deadlock/gobench/goker/blocking/etcd/7443` will fail with a runtime exception of `send on closed channel`. This is a runtime exception inherent to the microbenchmark, not one caused by Golf.
+Occasionally, `etcd/7443` will fail with a runtime exception of `send on closed channel`. This is an issue inherent to the microbenchmark, not one caused by Golf.
 
-The file `results` concludes with an aggregate report similar to the following:
+The file `results` continues with an aggregated report like the following:
 ```
-Correct guesses: 4042/4180 (96.70%)
-Correct deadlocks: 2262/2400 (94.25%)
-Correct not deadlocks: 1780/1780
-Incorrect guesses: 138 (3.30%)
-
-Directory: deadlock/cgo-examples
-Correct guesses: 220/220 (100.00%)
-Correct deadlocks: 140 (100.00%)
-
-Directory: deadlock/gobench/goker/blocking
-Correct guesses: 2162/2300 (94.00%)
-Correct deadlocks: 2122 (93.89%)
+Benchmark	1P	2P	4P	10P	Total
+goker/etcd/7443/main.go/129:2	0	0	0	1	5.00%
+goker/etcd/7443/main.go/216:4	0	0	0	1	5.00%
+goker/etcd/7443/main.go/222:5	0	0	0	1	5.00%
+goker/etcd/7443/main.go/226:4	0	0	0	1	5.00%
+goker/etcd/7443/main.go/96:2	0	0	0	1	5.00%
+goker/grpc/3017/main.go/106:5	0	5	5	5	75.00%
+goker/grpc/3017/main.go/71:3	0	5	5	5	75.00%
+goker/grpc/3017/main.go/97:4	0	5	5	5	75.00%
+goker/hugo/3251/main.go/54:4	5	5	5	4	95.00%
+goker/hugo/3251/main.go/62:7	5	5	5	4	95.00%
+goker/kubernetes/62464/main.go/115:4	5	5	5	4	95.00%
+goker/kubernetes/62464/main.go/117:4	5	5	5	4	95.00%
+goker/moby/27782/main.go/213:2	5	2	3	4	70.00%
+goker/moby/27782/main.go/65:2	5	2	3	4	70.00%
+goker/moby/33781/main.go/39:5	5	5	4	4	90.00%
+Remaining 111 go instruction (67 benchmarks)					100.00%
+Aggregated	93.65%	95.08%	95.24%	95.71%	94.92%
 ```
 
-`Correct guesses` signals how many reports are correctly guessed, when compared with the expected value (the left- and right-hand sides of `/`, rspectively). The values change depending on the stated number of microbenchmark execution repetitions, e.g., a suite execution with `100` expected guesses, totals to `5000` expected guess if set to repeat `50` times.
+This corresponds with the results presented in Table 1, answering **RQ1** ***(a)*** (the example above uses 5 microbenchmark execution repetitions), and showing the efficacy of Golf on the microbenchmarks. The expectation is that the results only include entries from `goker` (the paper omits the `goker` prefix in the table), and **NO** `cgo-examples` entries.
 
-`Correct deadlocks` counts how many expected deadlocks are correctly reported, followed by a percentage. The percentage of this value roughly corresponds with the that in Table 1, at cell **Aggregated (%)/Total**.
-
-`Correct not deadlocks` counts how many syntactical goroutines were expected to not a cause a deadlock, and, therefore, not lead to any Golf reports.
-
-`Incorrect guesses` is the difference between `Correct guesses` and the total number of expected guesses.
-
-Below the total report, are the aggregated efficacy metrics for the two microbenchmark suites described in the paper. The entries at `deadlocks/cgo-examples` and `deadlocks/gobench/goker/blocking` are related to the microbenchmarks extracted from Saioc et al.[19], and Ting Yuan et al.[28], respectively.
-It is expected that the values for `Correct guesses` are at `100%`, consistently, for `deadlocks/cgo-examples`, and `93-95%` for `deadlocks/gobench/goker/blocking`.
+The aggregated detection rate value at cell **Aggregated/Total** is expected to be above `90%`, with a median value of `~94%` if the experiment is repeated.
 
 #### Golf overhead
 

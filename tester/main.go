@@ -226,8 +226,9 @@ func RunBenchmark() {
 
 	if !perf {
 		content := fullReport.String()
-		content += "\n" + fullReport.DirAggregates("deadlock/cgo-examples")
-		content += "\n" + fullReport.DirAggregates("deadlock/gobench/goker/blocking")
+		// content += "\n" + fullReport.DirAggregates("deadlock/cgo-examples")
+		// content += "\n" + fullReport.DirAggregates("deadlock/gobench/goker/blocking")
+		content += "\n\n" + fullReport.Tabulated()
 		if err := os.WriteFile(reportDest, []byte(content), os.ModePerm); err != nil {
 			log.Fatal("Failed to write report:", err)
 		}

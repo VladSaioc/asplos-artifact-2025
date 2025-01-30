@@ -61,6 +61,11 @@ func (dls ExpectedDeadlocks) String() string {
 		strings.Join(dlsStr, "\n\t"))
 }
 
+// PosString returns the position string of the expected deadlock.
+func (dl ExpectedDeadlock) PosString() string {
+	return fmt.Sprintf("%d:%d", dl.Line, dl.Column)
+}
+
 // GetFunctionName constructs a
 func (v *expectedDeadlockVisitor) GetFunctionName() string {
 	functionName := v.Package.Name + ReceiverToString(v.Receiver)
