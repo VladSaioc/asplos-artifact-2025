@@ -248,7 +248,7 @@ func makeFlags() {
 	flag.BoolVar(&perf, "perf", false, "Run performance tests.")
 	flag.IntVar(&parallelism, "parallelism", runtime.GOMAXPROCS(0), "Number of parallel tests to run.")
 	flag.StringVar(&baselineCompiler, "baseline", "go", "Path to executable of baseline Go compiler/runtime. Defaults to `go`.")
-	flag.StringVar(&goCompiler, "go", "go", "Path to executable of Go compiler/runtime. Defaults to system `go`.")
+	flag.StringVar(&goCompiler, "golf", "go", "Path to executable of Go compiler/runtime. Defaults to system `go`.")
 	flag.StringVar(&matchExamplesStr, "match", "", "Only run tests that match the given regular expression.")
 	flag.StringVar(&dontMatchExamplesStr, "dontmatch", "", "Don't run tests that match the given regular expression.")
 	flag.StringVar(&testFiles, "tests", testFiles, "Direct the tester to a directory of benchmarks.")
