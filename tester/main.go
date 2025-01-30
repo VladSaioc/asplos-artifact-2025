@@ -226,8 +226,9 @@ func RunBenchmark() {
 
 	if !perf {
 		content := fullReport.String()
-		content += "\n" + fullReport.DirAggregates("deadlock/cgo-examples")
-		content += "\n" + fullReport.DirAggregates("deadlock/gobench/goker/blocking")
+		// content += "\n" + fullReport.DirAggregates("deadlock/cgo-examples")
+		// content += "\n" + fullReport.DirAggregates("deadlock/gobench/goker/blocking")
+		content += "\n\n" + fullReport.Tabulated()
 		if err := os.WriteFile(reportDest, []byte(content), os.ModePerm); err != nil {
 			log.Fatal("Failed to write report:", err)
 		}
@@ -236,6 +237,10 @@ func RunBenchmark() {
 		if err := os.WriteFile(reportDest+"-perf.csv", []byte(content), os.ModePerm); err != nil {
 			log.Fatal("Failed to write report:", err)
 		}
+		content = fullReport.OverheadMeasurementsPlot()
+		if err := os.WriteFile(reportDest+".tex", []byte(content), os.ModePerm); err != nil {
+			log.Fatal("Failed to plot report:", err)
+		}
 	}
 }
 
@@ -243,7 +248,7 @@ func makeFlags() {
 	flag.BoolVar(&perf, "perf", false, "Run performance tests.")
 	flag.IntVar(&parallelism, "parallelism", runtime.GOMAXPROCS(0), "Number of parallel tests to run.")
 	flag.StringVar(&baselineCompiler, "baseline", "go", "Path to executable of baseline Go compiler/runtime. Defaults to `go`.")
-	flag.StringVar(&goCompiler, "go", "go", "Path to executable of Go compiler/runtime. Defaults to system `go`.")
+	flag.StringVar(&goCompiler, "golf", "go", "Path to executable of Go compiler/runtime. Defaults to system `go`.")
 	flag.StringVar(&matchExamplesStr, "match", "", "Only run tests that match the given regular expression.")
 	flag.StringVar(&dontMatchExamplesStr, "dontmatch", "", "Don't run tests that match the given regular expression.")
 	flag.StringVar(&testFiles, "tests", testFiles, "Direct the tester to a directory of benchmarks.")

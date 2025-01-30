@@ -1,5 +1,5 @@
 results-*
-go-deadlock-gc-tester
+golf-tester
 main
 settings.json
 .DS_Store

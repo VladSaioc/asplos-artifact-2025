@@ -226,6 +226,6 @@ func TestReportString(t *testing.T) {
 
 	require.Equal(t, "Correct guesses: 0/1 (0.00%)", msg[3])
 	require.Equal(t, "Correct deadlocks: 0/0 (NaN%)", msg[4])
-	require.Equal(t, "Correct not deadlocks: 0/1 (0.00%)", msg[5])
+	require.Equal(t, "Correct not deadlocks: 0/1", msg[5])
 	require.Equal(t, "Incorrect guesses: 1 (100.00%)", msg[6])
 }

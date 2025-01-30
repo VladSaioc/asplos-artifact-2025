@@ -19,6 +19,6 @@ case $1 in
 esac
 
 
-docker build -t go-setup --target go-setup $PWD
+docker build -t golf --target golf $PWD
 
-docker run --rm -it go-setup
+docker run -it golf

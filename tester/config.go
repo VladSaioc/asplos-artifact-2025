@@ -7,22 +7,32 @@ import (
 // Config is a configuration of the program.
 type Config []configvalue
 
+const (
+	// Configuration values
+	VERBOSITY = iota
+	GOLFFLAG
+	PROCS
+)
+
 var (
 	// defaultvalues is the default configuration for the program
-	defaultvalues = []Config{{
-		gcddtraceOff,
-		// gcddtraceOn,
-		// gcddtraceTarget,
-	}, {
-		deadlockDetectionOff,
-		deadlockDetectionCollect,
-		// deadlockDetectionMonitor,
-	}, {
-		maxProcs1,
-		maxProcs2,
-		maxProcs4,
-		maxProcs10,
-	}}
+	defaultvalues = []Config{
+		VERBOSITY: {
+			gcddtraceOff,
+			// gcddtraceOn,
+			// gcddtraceTarget,
+		},
+		GOLFFLAG: {
+			deadlockDetectionOff,
+			deadlockDetectionCollect,
+			// deadlockDetectionMonitor,
+		},
+		PROCS: {
+			maxProcs1,
+			maxProcs2,
+			maxProcs4,
+			maxProcs10,
+		}}
 )
 
 func (c Config) String() string {
@@ -35,6 +45,16 @@ func (c Config) Name() string {
 		parts = append(parts, v.Name())
 	}
 	return strings.Join(parts, "-")
+}
+
+// Ps returns the number of virtual cores in the configuration.
+func (c Config) Ps() int {
+	for _, v := range c {
+		if v, ok := v.(maxProcs); ok {
+			return int(v)
+		}
+	}
+	return -1
 }
 
 func (c Config) Flags() []string {
