@@ -5,7 +5,6 @@ import (
 	"log"
 	"math"
 	"os"
-	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -238,11 +237,11 @@ func (r *Report) String() string {
 		}
 	}
 
-	totalGuesses := correctGuesses + incorrectGuesses
-	content += "\n\n" + fmt.Sprintf("Correct guesses: %d/%d (%.2f%%)\n", correctGuesses, totalGuesses, float64(correctGuesses)/float64(totalGuesses)*100) +
-		fmt.Sprintf("Correct deadlocks: %d/%d (%.2f%%)\n", correctDeadlocks, expectedDeadlocks, float64(correctDeadlocks)/float64(expectedDeadlocks)*100) +
-		fmt.Sprintf("Correct not deadlocks: %d/%d\n", correctGuesses-correctDeadlocks, totalGuesses-expectedDeadlocks) +
-		fmt.Sprintf("Incorrect guesses: %d (%.2f%%)\n", incorrectGuesses, float64(incorrectGuesses)/float64(totalGuesses)*100)
+	// totalGuesses := correctGuesses + incorrectGuesses
+	// content += "\n\n" + fmt.Sprintf("Correct guesses: %d/%d (%.2f%%)\n", correctGuesses, totalGuesses, float64(correctGuesses)/float64(totalGuesses)*100) +
+	// 	fmt.Sprintf("Correct deadlocks: %d/%d (%.2f%%)\n", correctDeadlocks, expectedDeadlocks, float64(correctDeadlocks)/float64(expectedDeadlocks)*100) +
+	// 	fmt.Sprintf("Correct not deadlocks: %d/%d\n", correctGuesses-correctDeadlocks, totalGuesses-expectedDeadlocks) +
+	// 	fmt.Sprintf("Incorrect guesses: %d (%.2f%%)\n", incorrectGuesses, float64(incorrectGuesses)/float64(totalGuesses)*100)
 
 	return content
 }
@@ -269,7 +268,7 @@ func (r *Report) Tabulated() string {
 
 	DEADLOCKS:
 		for _, dl := range report.Deadlocks {
-			pos := path.Join(report.Target, "main.go", dl.PosString())
+			pos := fmt.Sprintf("%s:%d", report.Target, dl.Line)
 			entry, ok := entries[pos]
 			if !ok {
 				entry = tabEntry{
@@ -280,7 +279,8 @@ func (r *Report) Tabulated() string {
 			}
 
 			for _, mismatch := range report.Diff.Mismatches {
-				if dl.PosString() == mismatch.PosString() {
+				if dl.Line == mismatch.Line {
+					entries[pos] = entry
 					continue DEADLOCKS
 				}
 			}

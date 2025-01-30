@@ -243,22 +243,3 @@ func main() {
 		}
 	}()
 }
-
-// 	Example deadlock trace:
-//
-// 	G1								G2										G3								G4
-// 	----------------------------------------------------------------------------------------------------------------------------------------
-//	notifyCh<- [0,1,2] [1]
-//	Dial()
-//	go cc.lbWatcher() [G2]
-//	go func() [G3]					.
-//	go conn.Close() [G4]			.										.
-//	<-closec						.										.								.
-// 	.								addrs := <-cc.dobts.balancer.Notify()	.								.
-//	.								cc.rwmu.Lock()	[L2]					.								.
-//	.								.										sb.Close()						.
-//	.								.										b.rwmu.Close()					.
-//	.								.										.								cc.rwmu.Lock() [L2]
-//	.								cc.rwmu.Unlock() [L2]					.								.
-//	.								.										b.rwmu.Lock() [L3]				.
-//	FIXME: finish this trace
