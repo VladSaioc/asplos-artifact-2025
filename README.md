@@ -1,4 +1,4 @@
-# Dynamic Partial Deadlock Detection and Recovery via Garbage Collection (Paper 597) ASPLOS 2025 Artifact
+# Dynamic Partial Deadlock Detection and Recovery via Garbage Collection ASPLOS 2025 Artifact
 
 ## Introduction
 
@@ -161,3 +161,7 @@ CONTAINER ID    IMAGE      COMMAND   CREATED          STATUS          PORTS     
 docker cp <ID>:/usr/app/tester/results.tex ./results.tex
 ```
 5. Render `./results.tex` as a PDF with the TeX compiler of your choice.
+6. Remove the container when done:
+```
+docker rm <ID>
+```

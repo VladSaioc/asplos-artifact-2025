@@ -21,4 +21,4 @@ esac
 
 docker build -t golf --target golf $PWD
 
-docker run --rm -it golf
+docker run -it golf
