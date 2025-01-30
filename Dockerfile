@@ -40,8 +40,10 @@ RUN cd /usr/app/golf/src && bash make.bash
 COPY ./tester /usr/app/tester
 WORKDIR /usr/app/tester
 
+RUN go build .
+
 # Run microbenchmarks for coverage
-RUN go run . -baseline "$BASELINE" -go "$GOLF" -report results -repeats 100 -dontmatch "(buggy|nonblocking)" -match "deadlock/(gobench|cgo-examples)"
+RUN ./golf-tester -baseline "$BASELINE" -golf "$GOLF" -report results -repeats 100 -dontmatch "(buggy|nonblocking)" -match "deadlock/(gobench|cgo-examples)"
 
 # Run microbenchmarks for performance
-RUN go run . -perf -baseline "$BASELINE" -go "$GOLF" -report results -repeats 5 -dontmatch "(buggy|nonblocking)" -match "(gobench|cgo-examples)"
+RUN ./golf-tester -perf -baseline "$BASELINE" -golf "$GOLF" -report results -repeats 5 -dontmatch "(buggy|nonblocking)" -match "(gobench|cgo-examples)"
