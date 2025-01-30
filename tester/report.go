@@ -268,6 +268,10 @@ func (r *Report) Tabulated() string {
 
 	DEADLOCKS:
 		for _, dl := range report.Deadlocks {
+			if !dl.DeadlockShouldBeFound() {
+				// Skip `deadlocks: {0, false}` annotations.
+				continue
+			}
 			pos := fmt.Sprintf("%s:%d", report.Target, dl.Line)
 			entry, ok := entries[pos]
 			if !ok {
