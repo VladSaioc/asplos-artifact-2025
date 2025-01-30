@@ -16,7 +16,7 @@ func Timeout(ctx context.Context) {
 	ch := make(chan any)
 
 	go func() {
-		// deadlocks: x > 20
+		// deadlocks: x > 0
 		ch <- struct{}{}
 	}()
 
