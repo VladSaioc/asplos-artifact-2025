@@ -7,22 +7,24 @@ Golf is an extension to the baseline Go runtime that allows it to detect *partia
 This artifact supports the claims in the paper about the microbenchmark evaluation. It does not support the claims about the example service and large enterprise code base test suites, as those are proprietary.
 
 In order the supported claims are:
-* Demonstrating the efficacy of Golf in the detecting the partial deadlocks in the microbenchmark suite.
-* Demonstrating that the runtime overhead is not signficantly larger than the baseline, and may even outperform the baseline GC for buggy examples.
+* **RQ1 (*a*)**: Demonstrating the efficacy of Golf in the detecting the partial deadlocks in the microbenchmark suite.
+* **RQ2**: Demonstrating that the runtime overhead is not signficantly larger than the baseline, and may even outperform the baseline GC for buggy examples.
+
+The arifact does *not* support **RQ1 (*b*)** and **(*c*)**.
 
 ## Requirements
 
 ### Hardware
 
-Recommended specifications: 8 cores, 32 GB RAM, 20 GB disk space, x86-64 architectures are recommended. Apple silicon machines use the ARM architecture and may run the Docker benchmark with some caveats (described below).
+Recommended specifications: 10 cores, 32 GB RAM, 20 GB disk space. x86-64 architectures are recommended; Apple Silicon machines use the ARM architecture and may run the Docker benchmark with some caveats (described below).
 
 ### Software
 
-Recommended OS is Linux. Docker must be installed, and the Docker daemon in a running state. Recommended Docker version is 26.1.4.
+Recommended OS is Linux. Docker must be installed, and the Docker daemon must run in the background. Recommended Docker version is 26.1.4.
 
 ##### MacOS on Apple silicon machines
 
-Running the benchmark on Apple silicon (M1/M2/M3) machines with MacOS, has additional prerequisites because of the underlying ARM architecture. Some dependencies are only available for x86-64, so the following steps are recommended before attempting to build and run the Docker image:
+Running the benchmark on Apple silicon (M1/M2/M3) machines with MacOS, has additional prerequisites because of the underlying ARM architecture. The following steps are recommended before attempting to build and run the Docker image:
 
 1. Install Colima:
 
@@ -30,13 +32,13 @@ Running the benchmark on Apple silicon (M1/M2/M3) machines with MacOS, has addit
 brew install colima
 ```
 
-2. Create a VM with the following specifications (numeric values may be adjusted):
+2. Create a VM with the following specifications (values may be adjusted):
 
 ```shell
-colima start --cpu 10 --memory 16 --disk 50 --arch amd64
+colima start --cpu 10 --memory 16 --disk 20 --arch amd64
 ```
 
-The build script automatically perform a best effort attempt at setting this up if run with `-apple-silicon` as the first argument, e.g.:
+The build script automatically performs a best effort attempt at setting this up if run with `-apple-silicon` as the first argument, e.g.:
 ```
 ./run.sh -apple-silicon
 ```
@@ -45,7 +47,7 @@ The build script automatically perform a best effort attempt at setting this up 
 
 ## Getting Started
 
-### Building Docker image
+### Basic test
 
 Estimated time: <1 hour
 
@@ -54,9 +56,9 @@ In order to run the artifact, run the following script at the root of this repos
 ./run.sh
 ```
 
-The script will build the Docker image, installing the Go runtime with the Golf extension, the baseline version of Go from which the Golf extension is derived, and the infrastructure necessary to run Golf on microbenchmarks.
+The script builds the Docker image and sets up a container, where it installs Go 1.22.5 as the baseline, an equivalent version of the Go runtime with the Golf extension, and the infrastructure necessary to run both versions on microbenchmarks. The script also runs the experiments described in **Inspecting results**.
 
-### Experimental workflow
+## Experimental workflow
 
 The experiment sets up two versions of the Go runtime (a baseline version at `./baseline`, and one with the Golf extension `./golf`), and supplies them to a testing harness (in `./tester`) so they may be used on microbenchmarks.
 
@@ -64,19 +66,27 @@ The experiment sets up two versions of the Go runtime (a baseline version at `./
 
 Each version of Go can be compiled by running:
 ```
-bash ./baseline/src/make.bash # For baseline
-bash ./golf/src/make.bash # For Golf
+# For baseline
+bash ./baseline/src/make.bash
+# For Golf
+bash ./golf/src/make.bash
 ```
-The Go compiler and runtime binaries are found at `./{baseline,golf}/bin/go`.
+The Go compiler and runtime binaries are found at: `./{baseline,golf}/bin/go`. Within the Docker container, the environment variables `$BASELINE` and `$GOLF` can be used as short-hands for the absolute paths of each binary.
 
 The Golf extensions to the Go runtime are found in the following files in `./golf/src`:
 * **Major changes**:
-  * `runtime/mgc.go` - live goroutine discovery (`gcDiscoverMoreStackRoots`) and deadlock detection (`detectPartialDeadlocks`).
-  * `runtime/mgcmark.go` - goroutine address obfuscations (`allGsSnapshotSortedForGc`, `unblockingWaitReason`, `gcMask`, `gcUnmask`) and deadlocked goroutine shutdown (`gcGoexit`).
-  * `runtime/sema.go` - deadlock detection and reclaim for semaphores.
-  * `runtime/runtime2.go` - goroutine status extensions.
-  * `sync/{runtime,waitgroup}.go` - (small but important) support WaitGroup deadlock detection.
-* Minor changes at `src/runtime{preempt,proc,runtime1,trace2,trace2status,traceback}.go`
+  * `runtime/mgc.go`: contains the logic for live goroutine discovery and deadlock detection.
+  The type `workType`, which governs the state of the garbage collector, is extended with additional fields.
+  Function `gcMarkDone` triggers the discovery of new live goroutines (`gcDiscoverMoreStackRoots`), and ensures that all objects are marked before deadlock detection (`detectPartialDeadlocks`).
+  * `runtime/mgcmark.go`: contains operations to obfuscate the addresses of goroutines (see ***Address Obfuscation*** in paper Section **5.4**).
+  This includes the functions: `allGsSnapshotSortedForGc`, `unblockingWaitReason`, `gcMask`, `gcUnmask`. `scanobject` is then instructed to skip masked addresses.
+  Getting the next marking root is achieved by `gcUpdatedMarkrootNext`.
+  Deadlocked goroutine shutdown logic is found at `gcGoexit`.
+  * `runtime/runtime2.go`: goroutine status extensions (`_Gdeadlocked`, `_Gunreachable`). Added a specialized wait reason (`waitReasonSyncWaitGroupWait`) for `sync.WaitGroup{}.Wait()` operations (see ***Inspecting Goroutine States to Assess Liveness*** in Section **5.4**).
+  Added `isSyncWait` to check whether a semaphorelock is caused by `sync.WaitGroup` or `sync.Cond`.
+  * `runtime/sema.go`: added function `gcDequeue` to allow the reclaiming of goroutines deadlocked as a result of semaphores (mutex and wait groups). Added `gcNotifyListNotifyOne` to allow proper reclaiming of goroutines deadlocked as a result of `sync.Cond.Wait`.
+  * `sync/{runtime,waitgroup}.go` - added support WaitGroup deadlock detection by including the `runtime_SemacquireWaitGroup` function, which uses the `waitReasonSyncWaitGroupWait` wait reason.
+* **Minor changes** at `src/runtime{preempt,proc,runtime1,trace2,trace2status,traceback}.go` that support the changes above, logging, debugging, etc.
 
 #### Testing harness
 
@@ -86,9 +96,25 @@ Within `./tester`, examples of Go programs are found in `./test`. Example progra
 
 The core microbenchmark suites are found in the subdirectories `cgo-examples` and `goker`, extracted from [Saioc et al.](https://github.com/VladSaioc/common-goroutine-leak-patterns) and [Ting Yuan et al.](https://github.com/timmyyuan/gobench), respectively. Aside from the deadlocking examples, a subset of the microbenchmarks also feature correct examples (see above).
 
-After running the testing harness, all resulting execution tracees will be included in subdirectories of `./tester` titled `results-<n>`, where `<n>` identifies the execution run index. Each directory mimics the subdirectory structure of `tests`.
+After running the testing harness, all resulting execution traces are included in `./tester/results-<n>` subdirectories, where `n` is the index of a microbenchmark suite execution. Each `results-` directory mimics the subdirectory structure of `tests`.
 
-The trace files have numes such as `gcddtrace-0-gcdetectdeadlocks-0-GOMAXPROCS-1`, which identify the runtime configuration used to run the example, e.g., `GOMAXPROCS-4` implies that the example was configured with 4 logical cores. Partial deadlocks are reported as `partial deadlock! ...`.
+The trace files have names such as `gcddtrace-0-gcdetectdeadlocks-0-GOMAXPROCS-1`, which identify the runtime configuration used to run the example, e.g., `GOMAXPROCS-4` implies that the example was configured with 4 logical cores (by configuring the environment with `GOMAXPROCS=4`). Partial deadlock reports start with `partial deadlock! ...`. For example:
+
+```
+partial deadlock! goroutine 169: main.Timeout.func1 Stack size: 2048 bytes
+runtime.gopark(...)
+	/usr/app/golf/src/runtime/proc.go:402 +0xc8 fp=0x14000123700 sp=0x140001236e0 pc=0x1042feb58
+runtime.chansend(0x1400008da40, 0x140001237b8, 0x1, 0x0?)
+	/usr/app/golf/src/runtime/chan.go:259 +0x3b0 fp=0x14000123770 sp=0x14000123700 pc=0x1042ccc40
+runtime.chansend1(0x0?, 0x10432f364?)
+	/usr/app/golf/src/runtime/chan.go:145 +0x18 fp=0x140001237a0 sp=0x14000123770 pc=0x1042cc878
+main.Timeout.func1()
+	/usr/app/tester/tests/deadlock/cgo-examples/sendleaks/timeout/main.go:20 +0x3c fp=0x140001237d0 sp=0x140001237a0 pc=0x10435aa7c
+runtime.goexit({})
+	/usr/app/golf/src/runtime/asm_arm64.s:1222 +0x4 fp=0x140001237d0 sp=0x140001237d0 pc=0x10432f364
+created by main.Timeout in goroutine 151
+	/usr/app/tester/tests/deadlock/cgo-examples/sendleaks/timeout/main.go:18 +0x74
+```
 
 ### Inspecting results
 
@@ -96,7 +122,7 @@ Once `./run.sh` finishes, the script starts a session within the Docker containe
 
 Due to non-determinism and flakiness, it is expected that the results will vary slightly between executions, and, implicitly, compared to those presented in the paper.
 
-#### Microbenchmark coverage
+#### RQ1 (*a*): Microbenchmark coverage
 
 To print the microbenchmark coverage report, run the following:
 ```
@@ -115,7 +141,7 @@ In order, each column represents the following:
 2. `Target` identifies the microbenchmark by file path.
 3. `Configuration` lists the runtime configuration with which the microbenchmark was executed, e.g., number of concurrent processes, or GC flags, up to, and including the enabling of deadlock detection.
 4. `Deadlock mismatches` lists all the unexpected deadlocks reported by Golf, with entries such as `Unexpected DL: main.NCastLeakFixed.func1`.
-5. `Exceptions` lists any exceptions raised by the microbenchmark at runtime.
+5. `Exceptions` lists any exceptions raised by the microbenchmark at runtime, identified as a `[runtime failure]`.
 6. `Comments` lists any additional comments (it is mostly used to give more context to runtime exceptions).
 
 It is expected that `results` does **NOT** include any unexpected deadlock reports.
@@ -139,15 +165,15 @@ goker/hugo/3251:54	5	5	5	4	95.00%
 goker/hugo/3251:62	5	5	5	4	95.00%
 goker/moby/27782:213	5	1	3	5	70.00%
 goker/moby/27782:65	5	1	3	5	70.00%
-Remaining 107 go instruction (68 benchmarks)					100.00%
-Aggregated	93.65%	94.76%	95.40%	95.40%	94.80%
+Remaining 107 go instruction (68 benchmarks)            100.00%
+Aggregated	        93.65%	94.76%	95.40%	95.40%	94.80%
 ```
 
-This corresponds with the results presented in Table 1, answering **RQ1** ***(a)*** (the example above uses 5 microbenchmark execution repetitions), and showing the efficacy of Golf on the microbenchmarks. The expectation is that the results only include entries from `goker` (the paper omits the `goker/` prefix for the **Benchmark line** entries), and **NO** `cgo-examples` entries. The total number of entries (number of rows plus the `x` value in `Remaining x go instructions`) must be 121.
+This corresponds with the results presented in Table 1, answering **RQ1 (*a*)**, and showing the efficacy of Golf on the microbenchmarks. The expectation is that the results only include entries from `goker` (the paper omits the `goker/` prefix for the **Benchmark line** entries), and **NO** `cgo-examples` entries. The total number of entries (number of rows plus the `x` value in `Remaining x go instructions`) must be 121.
 
 The aggregated detection rate value at cell **Aggregated/Total** is expected to be above `90%`, with a median value of `~94%` if the experiment is repeated.
 
-#### Golf overhead
+#### RQ2: Golf overhead
 
 To print the full microbenchmark overhead report, run the following:
 ```
@@ -175,12 +201,12 @@ root:/usr/app/tester# exit
 ```
 2. List the Docker container ids:
 ```
-docker ps
+docker ps -a
 ```
 3. Find the latest container where the `IMAGE` value is `golf`:
 ```
 CONTAINER ID    IMAGE      COMMAND   CREATED          STATUS          PORTS     NAMES
-<ID>            golf      ...
+<ID>            golf       ...
 ```
 4. Copy the image from the docker container to the source system, using the container ID:
 ```
@@ -203,6 +229,7 @@ Each example is identified by its own directory. Inside it, create a `main.go` f
 package main
 
 import (
+  "fmt"
   "runtime"
   "time"
   // Other libraries
@@ -243,12 +270,12 @@ runtime.chansend(...)
 	.../golf/src/runtime/chan.go:259
 runtime.chansend1(0x0?, 0x0?)
 	.../golf/src/runtime/chan.go:145
-...
+<more stack frames...>
 ```
 
-In order to validate the example with the testing harness, you must annotate the program with `// deadlocks: e` comments at key points, where `e` is either a Go integer constant (e.g., `// deadlocks: 10` signals that precisely 10 partial deadlocks are expected), or the inequality `x > 0` signalling that at least one deadlock is expected (the value of `x` is instantiated as the number of reports produced at runtime).
+In order to validate the example with the testing harness, you must annotate the program with `// deadlocks: e` comments at key points, where `e` is an expression stating how many deadlocks are expected at the location. It can either be a Go integer constant (e.g., `// deadlocks: 10` signals that precisely 10 partial deadlocks are expected), or the inequality `x > 0` signalling that at least one deadlock is expected, but the total number is unknown.
 
-The annotation identifies individual goroutines, but its placement depends on the signature of the goroutine function. For functions without formal parameters, place the annotation inside the function body. Examples:
+In order to pair the annotation with a syntactical goroutine, it must be placed close to the goroutine. However, the placement depends on the signature of the goroutine function. For functions without formal parameters, place the annotation inside the function body. Examples:
 ```
 // For anonymous functions:
 
@@ -268,7 +295,7 @@ go foo() // Do not place the annotation at the `go` instruction in this case.
 ```
 
 
-For functions with formal parameters, place the annotation above the `go` instruction. Examples:
+For functions with formal parameters, or methods, place the annotation above the `go` instruction. Examples:
 ```
 // deadlocks: x > 0
 go func(x int){
@@ -282,13 +309,92 @@ go obj.deadlockingMethod()
 ```
 
 The testing harness can be given the following input flags:
-* `-parallelism` (integer) - Dictate how many virtual cores the harness may use.
-* `-baseline` (file path) - Path to a baseline version of the Go runtime binary. Only needed when measuring performance.
-* `-golf` (file path) - Path to Go (with Golf) runtime binary
-* `-match` (regular expression, in quotes) - Only include a subset of the examples in `tests` with a path that matches the regular expression.
+* `-parallelism` (integer) dictates how many virtual cores the harness may use.
+* `-baseline` (file path) is the path to a baseline version of the Go runtime binary. It is only needed when measuring performance.
+* `-golf` (file path) is the path to binary of the Go runtime with the Golf extension.
+* `-match` (regular expression) only include a subset of the examples in `tests` with a path that matches the regular expression.
 * `-dontmatch`  (regular expression, in quotes) - Ignore examples whenever their path matches this regular expression.
 * `-repeats ` (integer) - How many times to repeat the entire microbenchmark execution in the same run.
 * `-report` (file name) - Generates a report of the run results at the given file path.
 * `-perf` - When provided, runs Golf in performance measurement mode, to compare against the baseline. The resulting reports are generated at `<-report>-perf.csv` (CSV file) and `<-report>-perf.tex` (TeX plot).
 
 To target only your own examples with the testing harness, supply `-match` with a regular expression that matches the sub-paths to your examples in `tests`, e.g., if your example is `tests/deadlock/foo/bar`, any of  `-match foo`, `-match bar`, or `-match foo/bar` work.
+
+#### Example
+
+From within the container, at `/usr/app/tester`, create the following directory:
+```
+mkdir tests/deadlock/example-foo
+```
+
+Paste the following contents in `./tester/tests/deadlock/example-foo/main.go`:
+```
+package main
+
+import (
+  "fmt"
+  "runtime"
+  "time"
+)
+
+func init() {
+  fmt.Println("Starting run...")
+}
+
+func main() {
+  defer func() {
+    time.Sleep(time.Second)
+    runtime.GC()
+  }()
+
+  for i := 0; i < 1000; i++ {
+    go func() {
+      // deadlocks: 1000
+      <-make(chan int)
+    }()
+  }
+}
+```
+
+Run the testing framework:
+```
+./golf-tester -golf $GOLF -match example-foo
+```
+
+The about will resemble the following:
+```
+Running round 1 of 1
+Done with configuration [ 1 ] : GOMAXPROCS=1 GODEBUG=gctrace=1,gcddtrace=0,gcdetectdeadlocks=0
+Done with configuration [ 1 ] : GOMAXPROCS=10 GODEBUG=gctrace=1,gcddtrace=0,gcdetectdeadlocks=0
+Done with configuration [ 1 ] : GOMAXPROCS=4 GODEBUG=gctrace=1,gcddtrace=0,gcdetectdeadlocks=0
+Done with configuration [ 1 ] : GOMAXPROCS=2 GODEBUG=gctrace=1,gcddtrace=0,gcdetectdeadlocks=0
+Done with configuration [ 1 ] : GOMAXPROCS=4 GODEBUG=gctrace=1,gcddtrace=0,gcdetectdeadlocks=1
+Done with configuration [ 1 ] : GOMAXPROCS=10 GODEBUG=gctrace=1,gcddtrace=0,gcdetectdeadlocks=1
+Done with configuration [ 1 ] : GOMAXPROCS=1 GODEBUG=gctrace=1,gcddtrace=0,gcdetectdeadlocks=1
+Done with configuration [ 1 ] : GOMAXPROCS=2 GODEBUG=gctrace=1,gcddtrace=0,gcdetectdeadlocks=1
+Done with all configurations!
+Whole benchmark took: 2.530711209s
+Repeat round,   Target, Configuration,  Deadlock mismatches,    Exceptions,     Comment
+
+Benchmark       1P      2P      4P      10P     Total
+Remaining 1 go instruction (1 benchmarks)                                       100.00%
+Aggregated      100.00% 100.00% 100.00% 100.00% 100.00%
+```
+No partial deadlock mismatches should be discovered. If any are indeed discovered, however, increase the timeout period at `time.Second`.
+
+Files within `./results-1/deadlock/example-foo` will contain the execution traces for each runtime configuration. For example, `./results-1/deadlock/example-foo/gcddtrace-0-gcdetectdeadlocks-1-GOMAXPROCS-2`, will contain 1000 entries similar to the following:
+```
+partial deadlock! goroutine 1004: main.main.func2 Stack size: 2048 bytes
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x1?, 0x104a04c88?)
+	/usr/app/golf/src/runtime/proc.go:402 +0xc8 fp=0x14000365700 sp=0x140003656e0 pc=0x104646658
+runtime.chanrecv(0x1400012f7a0, 0x0, 0x1)
+	/usr/app/golf/src/runtime/chan.go:583 +0x404 fp=0x14000365780 sp=0x14000365700 pc=0x1046159b4
+runtime.chanrecv1(0x0?, 0x0?)
+	/usr/app/golf/src/runtime/chan.go:442 +0x14 fp=0x140003657b0 sp=0x14000365780 pc=0x1046155a4
+main.main.func2()
+	/usr/app/tester/tests/deadlock/example-foo/main.go:22 +0x30 fp=0x140003657d0 sp=0x140003657b0 pc=0x10469eed0
+runtime.goexit({})
+	/usr/app/golf/src/runtime/asm_arm64.s:1222 +0x4 fp=0x140003657d0 sp=0x140003657d0 pc=0x1046759f4
+created by main.main in goroutine 1
+	/usr/app/tester/tests/deadlock/example-foo/main.go:20 +0x4c
+```

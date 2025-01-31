@@ -216,11 +216,14 @@ func RunBenchmark() {
 	fmt.Println("Done with all configurations!")
 	fmt.Println("Whole benchmark took:", time.Since(start))
 	if reportDest == "" {
-		fmt.Println(fullReport.String())
-
-		fmt.Println()
-		fmt.Println("Performance results:")
-		fmt.Println(fullReport.OverheadMeasurements())
+		if !perf {
+			fmt.Println(fullReport.String())
+			fmt.Println(fullReport.Tabulated())
+		} else {
+			fmt.Println()
+			fmt.Println("Performance results:")
+			fmt.Println(fullReport.OverheadMeasurements())
+		}
 		return
 	}
 
