@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14849367.svg)](https://doi.org/10.5281/zenodo.14849367)
+
 # Dynamic Partial Deadlock Detection and Recovery via Garbage Collection ASPLOS 2025 Artifact
 
 ## Introduction
