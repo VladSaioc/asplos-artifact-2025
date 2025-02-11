@@ -182,11 +182,12 @@ cat results-perf.csv
 
 The resulting CSV contains the following columns:
 ```
-Target,	Mark clock OFF (μs),	Mark clock ON (μs),	CPU utilization OFF (%),	CPU utilization ON (%)
+Target, GC cycles,	Mark clock OFF (μs),	Mark clock ON (μs),	CPU utilization OFF (%),	CPU utilization ON (%)
 ```
 
 Each are described as follows:
 * `Target` is an individual microbenchmark execution. It includes the name of the benchmark and the runtime configuration.
+* `GC cycles` is the difference in the number of GC cycles between the baseline and Golf. For most microbenchmark executions, this number is expected to be 0. Negative numbers indicate Golf performed more GC cycles.
 * `Mark clock OFF (μs)` is the average duration in microseconds for the baseline GC to complete the marking phase.
 * `Mark clock ON (μs)` is the average duration in microseconds for the Golf GC to complete the marking phase.
 * `CPU utilization OFF (%)` is the proportional CPU utilization required to run the baseline GC for the microbenchmark.
@@ -194,7 +195,7 @@ Each are described as follows:
 
 The `OFF` and `ON` columns refer to two separate microbenchmark executions, which otherwise have the same configurations, but where one uses the baseline GC, while the other uses the Golf GC.
 
-The microbenchmark performance overhead also produces a plot from the `Mark clock` columns, and dumps it in a `.tex` file at `results.tex`. To export it, follow these steps:
+The microbenchmark performance overhead also produces a box plot from the `Mark clock` columns, and dumps it in a `.tex` file at `results.tex`. To export it, follow these steps:
 1. First exit the Docker container:
 ```
 root:/usr/app/tester# exit

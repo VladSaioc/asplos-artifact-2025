@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"go/ast"
 	"go/format"
 	"go/token"
+	"math"
 	"regexp"
+	"slices"
 )
 
 // Generic parameter string representation.
@@ -132,4 +135,118 @@ func ReceiverToString(n ast.Node) string {
 	}
 
 	return "." + genericParam.ReplaceAllString(str, "")
+}
+
+// P1 gets the 1st percentile in a slice of orderable values.
+func P1[T cmp.Ordered](xs []T) (x T) {
+	if len(xs) == 0 {
+		return
+	}
+	slices.Sort(xs)
+	return xs[len(xs)/100]
+}
+
+// P1 gets the 25th percentile in a slice of orderable values.
+func P25[T cmp.Ordered](xs []T) (x T) {
+	if len(xs) == 0 {
+		return
+	}
+	slices.Sort(xs)
+	return xs[len(xs)/4]
+}
+
+// P50 gets the median value in a slice of orderable values.
+func P50[T cmp.Ordered](xs []T) (x T) {
+	if len(xs) == 0 {
+		return
+	}
+	slices.Sort(xs)
+	return xs[len(xs)/2]
+}
+
+// P50 gets the median value in a slice of orderable values.
+func P75[T cmp.Ordered](xs []T) (x T) {
+	if len(xs) == 0 {
+		return
+	}
+	slices.Sort(xs)
+	return xs[len(xs)*3/4]
+}
+
+// P99 gets the 99th percentile in a slice of orderable values.
+func P99[T cmp.Ordered](xs []T) (x T) {
+	if len(xs) == 0 {
+		return
+	}
+	slices.Sort(xs)
+	return xs[len(xs)*99/100]
+}
+
+type BoxMetrics[T cmp.Ordered] struct {
+	// Smallest outlier
+	Min T
+	// Values below the 1'st percentile.
+	SmallOutliers []T
+	// P1 to P25 percentile values.
+	Q0 T
+	// P25 to P50 percentile values.
+	Q1 T
+	// P50 percentile value.
+	Q2 T
+	// P50 to P75 percentile values.
+	Q3 T
+	// P75 to P99 percentile values.
+	Q4 T
+	// Values above the 99th percentile.
+	LargeOutliers []T
+	// Biggest outlier
+	Max T
+}
+
+// BoxPlotMetrics computes the box plot metrics for a slice of orderable values.
+func BoxPlotMetrics[T cmp.Ordered](xs []T) (m BoxMetrics[T]) {
+	if len(xs) == 0 {
+		return
+	}
+
+	slices.Sort(xs)
+	m.Min = xs[0]
+	m.Q0 = P1(xs)
+	m.Q1 = P25(xs)
+	m.Q2 = P50(xs)
+	m.Q3 = P75(xs)
+	m.Q4 = P99(xs)
+	m.Max = xs[len(xs)-1]
+
+	for _, x := range xs {
+		if x < m.Q0 {
+			m.SmallOutliers = append(m.SmallOutliers, x)
+		} else if x > m.Q4 {
+			m.LargeOutliers = append(m.LargeOutliers, x)
+		}
+	}
+
+	return
+}
+
+// NormalizeSlowdown takes the baseline and Golf marking time values,
+// computes the slowdown, and normalizes the result to in the decimal logarithmic scale.
+func NormalizeSlowdown(baseline, golf float64) float64 {
+	if golf == 0 {
+		return 0
+	}
+	sign, ratio := -1.0, (baseline-golf)/golf*100
+	if golf > baseline {
+		sign = 1.0
+		ratio = (golf - baseline) / baseline * 100
+	}
+
+	var value float64
+	if ratio >= 10.00 {
+		value = math.Log10(ratio)
+	} else {
+		value = ratio / 10
+	}
+
+	return sign * value
 }

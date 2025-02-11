@@ -41,9 +41,9 @@ type GCPerf struct {
 	avgUtilization    float64
 	avgUtilizationOn  float64
 	avgUtilizationOff float64
-	avgMarkClock      float64
-	avgMarkClockOn    float64
-	avgMarkClockOff   float64
+	avgMarkCPU        float64
+	avgMarkCPUOn      float64
+	avgMarkCPUOff     float64
 	finalHeapSize     int
 	finalStackSize    int
 	finalGoroutines   int
@@ -141,7 +141,7 @@ func (t Trace) GetGCPerf() (perf GCPerf) {
 		return avg / float64(len(t.GCMessages))
 	}
 
-	perf.avgMarkClock = getAvg(func(gc gcTrace) float64 { return gc.clockMarkTime })
+	perf.avgMarkCPU = getAvg(func(gc gcTrace) float64 { return gc.cpuMarkTime })
 
 	return
 }
@@ -149,10 +149,11 @@ func (t Trace) GetGCPerf() (perf GCPerf) {
 // GetPerfDelta computes the performance delta between two GCPerf instances.
 func GetPerfDelta(off, on GCPerf) GCPerf {
 	return GCPerf{
+		gcCycles:          on.gcCycles - off.gcCycles,
 		avgUtilizationOn:  on.avgUtilization,
 		avgUtilizationOff: off.avgUtilization,
-		avgMarkClockOff:   off.avgMarkClock,
-		avgMarkClockOn:    on.avgMarkClock,
+		avgMarkCPUOff:     off.avgMarkCPU,
+		avgMarkCPUOn:      on.avgMarkCPU,
 		finalHeapSize:     off.finalHeapSize - on.finalHeapSize,
 		finalStackSize:    off.finalStackSize - on.finalStackSize,
 		finalGoroutines:   off.finalGoroutines - on.finalGoroutines,

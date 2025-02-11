@@ -375,6 +375,7 @@ func (r *Report) OverheadMeasurements() string {
 
 	const (
 		TARGET = iota
+		GCYCLES
 		MARKCLOCKOFF
 		MARKCLOCKON
 		CPUTILOFF
@@ -384,7 +385,6 @@ func (r *Report) OverheadMeasurements() string {
 		TERMCPU
 		HEAP
 		STACK
-		GCYCLES
 		UTILIZATION
 		NUMGOS
 	)
@@ -392,6 +392,7 @@ func (r *Report) OverheadMeasurements() string {
 	content := make([][]string, 1, 2)
 	content[0] = []string{
 		TARGET:       "Target",
+		GCYCLES:      "GC cycles",
 		MARKCLOCKOFF: "Mark clock OFF (μs)",
 		MARKCLOCKON:  "Mark clock ON (μs)",
 		CPUTILOFF:    "CPU utilization OFF (%)",
@@ -416,8 +417,9 @@ func (r *Report) OverheadMeasurements() string {
 
 		content = append(content, []string{
 			TARGET:       report.TraceFile,
-			MARKCLOCKOFF: strconv.FormatFloat(perfDelta.avgMarkClockOff, 'f', 2, 64),
-			MARKCLOCKON:  strconv.FormatFloat(perfDelta.avgMarkClockOn, 'f', 2, 64),
+			GCYCLES:      strconv.Itoa(perfDelta.gcCycles),
+			MARKCLOCKOFF: strconv.FormatFloat(perfDelta.avgMarkCPUOff, 'f', 2, 64),
+			MARKCLOCKON:  strconv.FormatFloat(perfDelta.avgMarkCPUOn, 'f', 2, 64),
 			CPUTILOFF:    strconv.FormatFloat(perfDelta.avgUtilizationOff, 'f', 2, 64),
 			CPUTILON:     strconv.FormatFloat(perfDelta.avgUtilizationOn, 'f', 2, 64),
 		})
@@ -462,14 +464,14 @@ func (r *Report) OverheadMeasurementsPlot() string {
 	}
 
 	slices.SortFunc(perfs, func(p1, p2 GCPerf) int {
-		return int(p1.avgMarkClockOff*100 - p2.avgMarkClockOff*100)
+		return int(p1.avgMarkCPUOff*100 - p2.avgMarkCPUOff*100)
 	})
 
 	contentOn := make([]string, 0, len(perfs))
 	contentOff := make([]string, 0, len(perfs))
 	for i, perf := range perfs {
-		contentOn = append(contentOn, fmt.Sprintf("(%f, %f)", float64(i)/5, math.Log10(perf.avgMarkClockOff)))
-		contentOff = append(contentOff, fmt.Sprintf("(%f, %f)", float64(i)/5, math.Log10(perf.avgMarkClockOn)))
+		contentOn = append(contentOn, fmt.Sprintf("(%f, %f)", float64(i)/5, math.Log10(perf.avgMarkCPUOff)))
+		contentOff = append(contentOff, fmt.Sprintf("(%f, %f)", float64(i)/5, math.Log10(perf.avgMarkCPUOn)))
 	}
 
 	return `
@@ -516,6 +518,223 @@ func (r *Report) OverheadMeasurementsPlot() string {
 	\addlegendentry{Golf}
 \end{axis}
 \end{tikzpicture}
+
+\end{document}
+`
+}
+
+// OverheadMeasurementsBoxplot produces a boxplot comparing the performance
+// of the GC with deadlock enabled and disabled at equivalent runtime configurations.
+// The output is a .tex file that can be compiled to a PDF, and resembles the evaluation
+// in the paper.
+func (r *Report) OverheadMeasurementsBoxplot() string {
+	reportSlice := make([]*TargetReport, 0, len(r.Results))
+	for _, report := range r.Results {
+		if report.HasDeadlockDetection() {
+			reportSlice = append(reportSlice, report)
+		}
+	}
+
+	// Compute performance deltas
+	perfsCorrect, perfsDeadlock := make([]GCPerf, 0, len(reportSlice)), make([]GCPerf, 0, len(reportSlice))
+	for _, report := range reportSlice {
+		dlOffReport, ok := r.Results[report.GetDeadlockToggleReport()]
+		if !ok {
+			log.Println("Did not find equivalent report with deadlock detection off for:", report.TraceFile)
+			continue
+		}
+
+		onPerf := report.Trace.GetGCPerf()
+		if onPerf == (GCPerf{}) {
+			// Missing GC trace?
+			log.Println("Missing GC trace for:", report.TraceFile)
+			continue
+		}
+		offPerf := dlOffReport.Trace.GetGCPerf()
+		switch {
+		case report.IsCorrect():
+			perfsCorrect = append(perfsCorrect, GetPerfDelta(offPerf, onPerf))
+		case report.IsDeadlock():
+			perfsDeadlock = append(perfsDeadlock, GetPerfDelta(offPerf, onPerf))
+		}
+	}
+
+	slices.SortFunc(perfsCorrect, func(p1, p2 GCPerf) int {
+		p1Norm := NormalizeSlowdown(p1.avgMarkCPUOff, p1.avgMarkCPUOn)
+		p2Norm := NormalizeSlowdown(p2.avgMarkCPUOff, p2.avgMarkCPUOn)
+		return int(p1Norm*100 - p2Norm*100)
+	})
+
+	slices.SortFunc(perfsDeadlock, func(p1, p2 GCPerf) int {
+		p1Norm := NormalizeSlowdown(p1.avgMarkCPUOff, p1.avgMarkCPUOn)
+		p2Norm := NormalizeSlowdown(p2.avgMarkCPUOff, p2.avgMarkCPUOn)
+		return int(p1Norm*100 - p2Norm*100)
+	})
+
+	// Normalize slowdowns
+	perfsCorrectDataLog, perfsDeadlockDataLog := make([]float64, 0, len(perfsCorrect)), make([]float64, 0, len(perfsDeadlock))
+	for _, perf := range perfsCorrect {
+		perfsCorrectDataLog = append(perfsCorrectDataLog, NormalizeSlowdown(perf.avgMarkCPUOff, perf.avgMarkCPUOn))
+	}
+	for _, perf := range perfsDeadlock {
+		perfsDeadlockDataLog = append(perfsDeadlockDataLog, NormalizeSlowdown(perf.avgMarkCPUOff, perf.avgMarkCPUOn))
+	}
+
+	// Get procentual slowdowns
+	perfsCorrectPct, perfsDeadlockPct := make([]float64, 0, len(perfsCorrect)), make([]float64, 0, len(perfsDeadlock))
+	for _, perf := range perfsCorrect {
+		perfsCorrectPct = append(perfsCorrectPct, perf.avgMarkCPUOn/perf.avgMarkCPUOff)
+	}
+	for _, perf := range perfsDeadlock {
+		perfsDeadlockPct = append(perfsDeadlockPct, perf.avgMarkCPUOn/perf.avgMarkCPUOff)
+	}
+
+	maxDeadlockTime := slices.MaxFunc(perfsDeadlock, func(p1, p2 GCPerf) int {
+		return int(p1.avgMarkCPUOn - p2.avgMarkCPUOn)
+	})
+	maxCorrectTime := slices.MaxFunc(perfsCorrect, func(p1, p2 GCPerf) int {
+		return int(p1.avgMarkCPUOn - p2.avgMarkCPUOn)
+	})
+
+	// Box plots
+	correctBoxPct := BoxPlotMetrics(perfsCorrectPct)
+	deadlockBoxPct := BoxPlotMetrics(perfsDeadlockPct)
+
+	correctBoxLog := BoxPlotMetrics(perfsCorrectDataLog)
+	deadlockBoxLog := BoxPlotMetrics(perfsDeadlockDataLog)
+
+	q0CorrectOutliers, q4CorrectOutliers := correctBoxLog.SmallOutliers, correctBoxLog.LargeOutliers
+	q0DeadlockOutliers, q4DeadlockOutliers := deadlockBoxLog.SmallOutliers, deadlockBoxLog.LargeOutliers
+
+	correctOutlierString := make([]string, 0, len(q0CorrectOutliers)+len(q4CorrectOutliers))
+	for _, outlier := range q0CorrectOutliers {
+		correctOutlierString = append(correctOutlierString, strconv.FormatFloat(outlier, 'f', -1, 64))
+	}
+	for _, outlier := range q4CorrectOutliers {
+		correctOutlierString = append(correctOutlierString, strconv.FormatFloat(outlier, 'f', -1, 64))
+	}
+
+	deadlockOutlierString := make([]string, 0, len(q0DeadlockOutliers)+len(q4DeadlockOutliers))
+	for _, outlier := range q0DeadlockOutliers {
+		deadlockOutlierString = append(deadlockOutlierString, strconv.FormatFloat(outlier, 'f', -1, 64))
+	}
+	for _, outlier := range q4DeadlockOutliers {
+		deadlockOutlierString = append(deadlockOutlierString, strconv.FormatFloat(outlier, 'f', -1, 64))
+	}
+
+	getPctRow := func(pb, pg float64, fi func(int) int) string {
+		pCorrect, pDeadlock := perfsCorrect[fi(len(perfsCorrect))], perfsDeadlock[fi(len(perfsDeadlock))]
+		return strconv.FormatFloat(pb, 'f', 2, 64) +
+			` (` + strconv.FormatFloat(pCorrect.avgMarkCPUOff, 'f', 2, 64) + "µs $\\implies$ " + strconv.FormatFloat(pCorrect.avgMarkCPUOn, 'f', 2, 64) + `µs)` +
+			` & ` + strconv.FormatFloat(pg, 'f', 2, 64) +
+			` (` + strconv.FormatFloat(pDeadlock.avgMarkCPUOff, 'f', 2, 64) + "µs $\\implies$ " + strconv.FormatFloat(pDeadlock.avgMarkCPUOn, 'f', 2, 64) + `µs)`
+	}
+
+	// Return template
+	return `\documentclass{standalone}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepgfplotslibrary{statistics}
+\usepackage{pgfplotstable}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{calc,trees,positioning,arrows,chains,shapes.geometric,%
+    decorations.pathreplacing,decorations.pathmorphing,patterns,shapes,%
+    matrix,shapes.symbols}
+
+\begin{document}
+
+
+\begin{tikzpicture}
+    \begin{axis} [
+		boxplot/draw direction=y,
+		xtick={1,2},
+		xticklabels={\textbf{Correct}, \textbf{Deadlocking}},
+		ylabel={Slowdown},
+		ymajorgrids=true,
+		ymin=-3.5,ymax=3.5,
+		ytick={-3,-2,-1,0,1,2,3},
+		yticklabels={$0.1\times$, $0.5\times$, $0.9\times$, $1\times$, $1.1\times$, $2\times$, $10\times$},
+    ]
+	\addplot+ [
+        pattern=north east lines,
+        boxplot/every box/.style={draw=black},
+        boxplot/every whisker/.style={thick,black},
+        boxplot/every median/.style={ultra thick,black},
+        boxplot prepared={
+			lower whisker=` + strconv.FormatFloat(correctBoxLog.Q0, 'f', -1, 64) + `,
+			lower quartile=` + strconv.FormatFloat(correctBoxLog.Q1, 'f', -1, 64) + `,
+			median=` + strconv.FormatFloat(correctBoxLog.Q2, 'f', -1, 64) + `,
+			upper quartile=` + strconv.FormatFloat(correctBoxLog.Q3, 'f', -1, 64) + `,
+			upper whisker=` + strconv.FormatFloat(correctBoxLog.Q4, 'f', -1, 64) + `,
+        },
+        every mark/.append style={
+                fill=black!0,
+                fill opacity=0,
+                draw=black,
+            },
+	] table [row sep=\\,y index=0] {
+		data\\ ` + strings.Join(correctOutlierString, `\\ `) + `\\
+	};
+
+	\addplot+ [
+		pattern=north east lines,
+		boxplot/every median/.style={thick},
+		boxplot/every box/.style={draw=black},
+		boxplot/every whisker/.style={thick,black},
+		boxplot/every median/.style={ultra thick,black},
+		every mark/.append style={
+			fill=black!0,
+			fill opacity=0,
+			draw=black,
+		},
+		boxplot prepared={
+				lower whisker=` + strconv.FormatFloat(deadlockBoxLog.Q0, 'f', -1, 64) + `,
+				lower quartile=` + strconv.FormatFloat(deadlockBoxLog.Q1, 'f', -1, 64) + `,
+				median=` + strconv.FormatFloat(deadlockBoxLog.Q2, 'f', -1, 64) + `,
+				upper quartile=` + strconv.FormatFloat(deadlockBoxLog.Q3, 'f', -1, 64) + `,
+				upper whisker=` + strconv.FormatFloat(deadlockBoxLog.Q4, 'f', -1, 64) + `,
+		},
+	] table [row sep=\\,y index=0] {
+		data\\ ` + strings.Join(deadlockOutlierString, `\\ `) + `\\
+	};
+	\end{axis}
+\end{tikzpicture}
+
+\begin{tabular}{|c|c|c|}
+	\hline
+	\textbf{Metric} & \textbf{Correct} & \textbf{Deadlocking}
+	\\
+	\hline
+	\textbf{Min} & ` + getPctRow(correctBoxPct.Min, deadlockBoxPct.Min, func(_ int) int { return 0 }) + `
+	\\
+	\hline
+	\textbf{P1} & ` + getPctRow(correctBoxPct.Q0, deadlockBoxPct.Q0, func(l int) int { return l / 100 }) + `
+	\\
+	\hline
+	\textbf{P25} & ` + getPctRow(correctBoxPct.Q1, deadlockBoxPct.Q1, func(l int) int { return l / 4 }) + `
+	\\
+	\hline
+	\textbf{P50} & ` + getPctRow(correctBoxPct.Q2, deadlockBoxPct.Q2, func(l int) int { return l / 2 }) + `
+	\\
+	\hline
+	\textbf{P75} & ` + getPctRow(correctBoxPct.Q3, deadlockBoxPct.Q3, func(l int) int { return l * 3 / 4 }) + `
+	\\
+	\hline
+	\textbf{P99} & ` + getPctRow(correctBoxPct.Q4, deadlockBoxPct.Q4, func(l int) int { return l * 99 / 100 }) + `
+	\\
+	\hline
+	\textbf{Max} & ` + getPctRow(correctBoxPct.Max, deadlockBoxPct.Max, func(l int) int { return l - 1 }) + `
+	\\
+	\hline
+	\textbf{Max (absolute)} & ` + strconv.FormatFloat(maxCorrectTime.avgMarkCPUOn, 'f', 2, 64) + ` (` +
+		strconv.FormatFloat(maxCorrectTime.avgMarkCPUOn/maxCorrectTime.avgMarkCPUOff, 'f', 2, 64) +
+		`$\times$) & ` + strconv.FormatFloat(maxDeadlockTime.avgMarkCPUOn, 'f', 2, 64) + ` (` +
+		strconv.FormatFloat(maxDeadlockTime.avgMarkCPUOn/maxDeadlockTime.avgMarkCPUOff, 'f', 2, 64) +
+		`$\times$)
+	\\
+	\hline
+\end{tabular}
 
 \end{document}
 `
